@@ -14,16 +14,8 @@ class Square:
     self.blocked = True
     
   def check_space(self) -> int | None:
-    if self.spaces[0] is not None:
-      if self.spaces[1] is not None:
-        if self.spaces[2] is not None:
-          if self.spaces[3] is not None:
-            return None
-          else:
-            return 3
-        else:
-          return 2
-      else:
-        return 1
-    else:
-      return 0
+    """Returns the first free space index or None if full."""
+    for idx, space in enumerate(self.spaces):
+      if space is None:
+        return idx
+    return None
