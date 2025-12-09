@@ -14,6 +14,13 @@ COLORS = ["verde", "azul", "amarillo", "rojo"]
 
 def color_index_from_name(name: str) -> int:
     lname = name.lower()
+    aliases = {
+        "green": "verde",
+        "blue": "azul",
+        "yellow": "amarillo",
+        "red": "rojo",
+    }
+    lname = aliases.get(lname, lname)
     for idx, color in enumerate(COLORS):
         if lname.startswith(color):
             return idx
@@ -32,20 +39,23 @@ class ParquesEngine:
     turn_index: int = 0
     last_roll: List[int] | None = None
     winner: Optional[str] = None
+    rolls_in_turn: int = 0
+    consecutive_doubles: int = 0
 
     def add_player(self, name: str, color_idx: Optional[int] = None) -> None:
         if self.started:
             raise ValueError("Game already started")
         if len(self.players) >= 4:
             raise ValueError("Game is full")
+        if any(p.name == name for p in self.players):
+            return
 
         if color_idx is None:
             color_idx = len(self.players) % len(COLORS)
 
-        # Ensure unique color
         used_colors = {p.color for p in self.players}
-        while color_idx in used_colors:
-            color_idx = (color_idx + 1) % len(COLORS)
+        if color_idx in used_colors:
+            raise ValueError("Color already taken")
 
         player = Player(name=name, color=color_idx)
         self.players.append(player)
@@ -55,19 +65,60 @@ class ParquesEngine:
             raise ValueError("Need at least 2 players to start")
         self.started = True
         self.turn_index = 0
+        self.rolls_in_turn = 0
+        self.consecutive_doubles = 0
 
     @property
     def current_player(self) -> Player:
         return self.players[self.turn_index % len(self.players)]
 
-    def next_turn(self) -> None:
+    def next_turn(self, reset_last_roll: bool = True) -> None:
         self.turn_index = (self.turn_index + 1) % len(self.players)
-        self.last_roll = None
+        self.rolls_in_turn = 0
+        self.consecutive_doubles = 0
+        if reset_last_roll:
+            self.last_roll = None
+
+    def _all_tokens_in_jail(self, player: Player) -> bool:
+        return all(t.in_jail for t in player.tokens)
+
+    def _release_from_jail(self, player: Player) -> bool:
+        """Place one jailed token on the exit if possible."""
+        jailed = [t for t in player.tokens if t.in_jail]
+        if not jailed:
+            return False
+        token = jailed[0]
+        placed = self.board.place_token_on_exit(token)
+        return placed
+
+    def _farthest_token(self, player: Player) -> Optional[Token]:
+        on_board = [t for t in player.tokens if not t.in_jail and not t.in_goal and t.steps >= 0]
+        if not on_board:
+            return None
+        return max(on_board, key=lambda t: t.steps)
 
     def roll_for_current_player(self) -> List[int]:
         if not self.started:
             raise ValueError("Game not started")
-        self.last_roll = self.current_player.roll_dice(self.dice)
+        player = self.current_player
+        self.rolls_in_turn += 1
+        self.last_roll = player.roll_dice(self.dice)
+        is_double = len(self.last_roll) == 2 and self.last_roll[0] == self.last_roll[1]
+        if is_double:
+            self.consecutive_doubles += 1
+            # Si todas las fichas están en cárcel, sacar una; si no, el jugador puede decidir (no auto-liberamos)
+            if self._all_tokens_in_jail(player):
+                self._release_from_jail(player)
+            if self.consecutive_doubles >= 3:
+                token = self._farthest_token(player)
+                if token:
+                    self.board.go_to_jail(token)
+                self.next_turn(reset_last_roll=False)
+        else:
+            self.consecutive_doubles = 0
+            # If all tokens are jailed, allow up to 3 tries; on 3rd failure pass turn
+            if self._all_tokens_in_jail(player) and self.rolls_in_turn >= 3:
+                self.next_turn(reset_last_roll=False)
         return self.last_roll
 
     def _can_exit_jail(self, roll: List[int]) -> bool:
@@ -104,14 +155,15 @@ class ParquesEngine:
             self.board.finish_line(token)
         return moved
 
-    def move_token(self, player_name: str, tokens: list[int], steps: Optional[int] = None) -> bool:
+    def move_token(self, player_name: str, tokens: int | list[int], steps: Optional[int] = None) -> bool:
         if not self.started:
             raise ValueError("Game not started")
         if player_name != self.current_player.name:
             raise ValueError("Not this player's turn")
-        if not tokens:
+        token_list = [tokens] if isinstance(tokens, int) else tokens
+        if not token_list:
             raise ValueError("No tokens specified")
-        for token_id in tokens:
+        for token_id in token_list:
             if token_id < 0 or token_id > 3:
                 raise ValueError("Invalid token")
 
@@ -119,26 +171,35 @@ class ParquesEngine:
         if not player:
             raise ValueError("Player not found")
 
-        if tokens[0] == tokens[1]:
-          if steps is None:
-              if not self.last_roll:
-                  raise ValueError("Roll dice first")
-              steps = sum(self.last_roll)
-          token = player.tokens[tokens[0]]
-          moved = self._move_steps(token, steps)
-        else: 
-            for token_id in tokens:      
-              token = player.tokens[token_id]
-              if steps is None:
-                  if not self.last_roll:
-                      raise ValueError("Roll dice first")
-                  steps = self.last_roll[token_id]
-              moved = self._move_steps(token, steps)
-        
+        if len(token_list) == 1:
+            token_id = token_list[0]
+            if steps is None:
+                if not self.last_roll:
+                    raise ValueError("Roll dice first")
+                steps = sum(self.last_roll)
+            token = player.tokens[token_id]
+            if token.in_jail and not self._can_exit_jail(self.last_roll or []):
+                raise ValueError("La ficha está en la cárcel, necesitas doble para moverla")
+            moved = self._move_steps(token, steps)
+        else:
+            for token_id in token_list:
+                token = player.tokens[token_id]
+                if steps is None:
+                    if not self.last_roll:
+                        raise ValueError("Roll dice first")
+                    steps = self.last_roll[token_id]
+                if token.in_jail and not self._can_exit_jail(self.last_roll or []):
+                    raise ValueError("La ficha está en la cárcel, necesitas doble para moverla")
+                moved = self._move_steps(token, steps)
+
         if moved and self._all_tokens_at_goal(player):
             self.winner = player.name
-        # Pass turn unless doubles
-        if not (self.last_roll and len(self.last_roll) == 2 and self.last_roll[0] == self.last_roll[1]):
+
+        is_double = self.last_roll and len(self.last_roll) == 2 and self.last_roll[0] == self.last_roll[1]
+        if self.consecutive_doubles >= 3:
+            # already handled in roll; ensure counters reset and move turn on
+            self.next_turn()
+        elif not is_double:
             self.next_turn()
         return moved
 

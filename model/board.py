@@ -29,6 +29,14 @@ class Board:
     def go_to_jail(self, token: Token) -> None:
         token.in_jail = True
         self.jail[token.color][token.id] = token
+        if token.x is not None and token.y is not None:
+            try:
+                idx = self.grid[token.x][token.y].spaces.index(token)
+                self.grid[token.x][token.y].spaces[idx] = None
+            except ValueError:
+                pass
+        token.x = None
+        token.y = None
 
     def remove_token_from_board(self, position: list[int]) -> None:
         self.grid[position[0]][position[1]].spaces[position[2]] = None

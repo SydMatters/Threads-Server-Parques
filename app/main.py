@@ -1,3 +1,6 @@
+import logging
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,10 +9,30 @@ from app.db.session import init_db
 
 from app.api.routes.health import router as health_router
 from app.api.routes.games import router as games_router
+from app.api.routes.ws import router as ws_router
 from app.api.routes.players import router as players_router
 from app.services.tcp_server import start_tcp_server
 
 settings = get_settings()
+
+# Configure logging to file (DEBUG) and console (INFO) separately
+log_file = Path(__file__).resolve().parent / "server.log"
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+root_logger.handlers.clear()
+
+fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+file_handler = logging.FileHandler(log_file, encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(fmt)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(fmt)
+
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
 
@@ -31,3 +54,4 @@ def on_startup() -> None:
 app.include_router(health_router, prefix="/health")
 app.include_router(games_router, prefix="/games")
 app.include_router(players_router, prefix="/players")
+app.include_router(ws_router)

@@ -23,7 +23,15 @@ def recv_lines(sock: socket.socket):
 
 def send_json(sock: socket.socket, payload: dict) -> None:
     message = json.dumps(payload, ensure_ascii=True) + "\n"
-    sock.sendall(message.encode("utf-8"))
+    try:
+        peer = sock.getpeername()
+    except OSError:
+        peer = "disconnected"
+    logger.debug("TCP -> %s: %s", peer, payload)
+    try:
+        sock.sendall(message.encode("utf-8"))
+    except OSError:
+        logger.info("TCP send failed to %s", peer)
 
 logger = logging.getLogger(__name__)
 
@@ -63,47 +71,73 @@ class TCPServer:
     def _handle_client(self, conn: socket.socket, addr: Tuple[str, int]) -> None:
         logger.info("Client connected %s", addr)
         player_name = None
-        game_id = None
         try:
             for line in recv_lines(conn):
                 if not line:
                     continue
+                logger.debug("TCP <- %s: %s", addr, line)
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError:
-                    send_json(conn, {"type": "error", "message": "invalid json"})
-                    continue
+                    logger.info("Invalid JSON from %s: %s", addr, line)
+                    break
 
                 msg_type = payload.get("type")
                 if msg_type == "join":
                     player_name = payload.get("player")
-                    game_id = payload.get("game_id")
-                    if not player_name or not game_id:
-                        send_json(conn, {"type": "error", "message": "player and game_id required"})
+                    color_name = payload.get("color")
+                    if not player_name:
+                        send_json(conn, {"type": "error", "message": "player required"})
                         continue
                     try:
                         session = self.manager.socket_join(
-                            game_id, player_name, ClientConn(player_name, conn, addr)
+                            player_name, ClientConn(player_name, conn, addr), color_name=color_name
                         )
-                        send_json(conn, {"type": "joined", "state": session.snapshot()})
+                        state = session.snapshot()
+                        send_json(conn, {"type": "joined", "state": state})
+                        session.broadcast({"type": "state", "state": state})
+                        logger.info("Join processed for %s, color %s", player_name, color_name)
                     except Exception as exc:
                         send_json(conn, {"type": "error", "message": str(exc)})
                 elif msg_type in ("roll", "move", "sync_time"):
-                    if not game_id or not player_name:
+                    if not player_name:
                         send_json(conn, {"type": "error", "message": "join first"})
                         continue
                     payload["player"] = player_name
                     try:
-                        self.manager.enqueue_action(game_id, payload)
+                        self.manager.enqueue_action(payload)
+                    except Exception as exc:
+                        send_json(conn, {"type": "error", "message": str(exc)})
+                elif msg_type == "start":
+                    try:
+                        logger.info("TCP start request from %s", player_name)
+                        session = self.manager.start_game(started_by=player_name)
+                        state = session.snapshot()
+                        session.broadcast({"type": "state", "state": state})
+                        logger.info("TCP broadcast state after start: %s", state)
                     except Exception as exc:
                         send_json(conn, {"type": "error", "message": str(exc)})
                 else:
                     send_json(conn, {"type": "error", "message": "unknown message type"})
+        except ConnectionResetError:
+            logger.info("Client reset connection %s", addr)
         except Exception as exc:
             logger.exception("Client handler error: %s", exc)
         finally:
+            if player_name:
+                try:
+                    session = self.manager.get_session()
+                    with session.lock:
+                        removed = session.clients.pop(player_name, None)
+                        if removed:
+                            logger.info("Detached client %s from session", player_name)
+                except Exception:
+                    logger.exception("Failed to detach client %s", player_name)
             logger.info("Client disconnected %s", addr)
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 _tcp_server: TCPServer | None = None

@@ -1,0 +1,15 @@
+INFO:     Will watch for changes in these directories: ['/home/vegasyd/U_temp/parques/Threads-Server-Parques']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [233176] using StatReload
+INFO:     Started server process [233180]
+INFO:     Waiting for application startup.
+2025-12-08 23:12:49,477 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-12-08 23:12:49,478 INFO sqlalchemy.engine.Engine PRAGMA main.table_info("players")
+2025-12-08 23:12:49,478 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-08 23:12:49,479 INFO sqlalchemy.engine.Engine COMMIT
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [233180]
+INFO:     Stopping reloader process [233176]

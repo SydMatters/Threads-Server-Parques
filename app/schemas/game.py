@@ -9,3 +9,12 @@ class GameState(BaseModel):
 
 class GameCreate(BaseModel):
     name: str | None = None
+
+
+class GameJoin(BaseModel):
+    player: str
+    color: str | None = None
+
+
+class GameStart(BaseModel):
+    player: str
